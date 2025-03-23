@@ -11,18 +11,21 @@ import struct
 def parse_name(data, offset):
     name_parts = []
     while True:
-        length = data[offset]
-        offset += 1
-        if length == 0:
-            break
-        elif length & 0xc0 == 0xc0:
-            pointer = struct.unpack('!H', data[offset - 1:offset + 1])[0] & 0x3fff
-            name_parts.append(parse_name(data, pointer))
-            break
-        else:
-            label = data[offset:offset + length].decode('ascii')
-            offset += length
-            name_parts.append(label)
+        try:
+            length = data[offset]
+            offset += 1
+            if length == 0:
+                break
+            elif length & 0xc0 == 0xc0:
+                pointer = struct.unpack('!H', data[offset - 1:offset + 1])[0] & 0x3fff
+                name_parts.append(parse_name(data, pointer))
+                break
+            else:
+                label = data[offset:offset + length].decode('ascii')
+                offset += length
+                name_parts.append(label)
+        except IndexError:
+            return '.'.join(name_parts)
     return '.'.join(name_parts)
 
 
@@ -89,36 +92,40 @@ def dns_query(type, name, server):
     for _ in range(ANCOUNT):
         # Parse the name
         name_parts = []
-        while True:
-            length = response_answer[offset]
-            offset += 1
-            if length == 0:
-                break
-            elif length & 0xc0 == 0xc0:
-                pointer = struct.unpack('!H', response_answer[offset - 1:offset + 1])[0] & 0x3fff
-                name_parts.append(parse_name(data, pointer))
-                break
+        try:
+            while True:
+                length = response_answer[offset]
+                offset += 1
+                if length == 0:
+                    break
+                elif length & 0xc0 == 0xc0:
+                    pointer = struct.unpack('!H', response_answer[offset - 1:offset + 1])[0] & 0x3fff
+                    name_parts.append(parse_name(data, pointer))
+                    break
+                else:
+                    label = response_answer[offset:offset + length].decode('ascii')
+                    offset += length
+                    name_parts.append(label)
+            name = '.'.join(name_parts)
+
+            # Parse the type, class, TTL, and RDLENGTH
+            type, cls, ttl, rdlength = struct.unpack('!HHIH', response_answer[offset:offset + 10])
+            offset += 10
+
+            # Parse the RDATA
+            rdata = response_answer[offset:offset + rdlength]
+            offset += rdlength
+
+            if type == 1:  # A record (IPv4)
+                ip_address = socket.inet_ntoa(rdata)
+                answers.append(ip_address)
+            elif type == 28:  # AAAA record (IPv6)
+                ip_address = socket.inet_ntop(socket.AF_INET6, rdata)
+                answers.append(ip_address)
             else:
-                label = response_answer[offset:offset + length].decode('ascii')
-                offset += length
-                name_parts.append(label)
-        name = '.'.join(name_parts)
-
-        # Parse the type, class, TTL, and RDLENGTH
-        type, cls, ttl, rdlength = struct.unpack('!HHIH', response_answer[offset:offset + 10])
-        offset += 10
-
-        # Parse the RDATA
-        rdata = response_answer[offset:offset + rdlength]
-        offset += rdlength
-
-        if type == 1:  # A record (IPv4)
-            ip_address = socket.inet_ntoa(rdata)
-            answers.append(ip_address)
-        elif type == 28:  # AAAA record (IPv6)
-            ip_address = socket.inet_ntop(socket.AF_INET6, rdata)
-            answers.append(ip_address)
-        else:
-            answers.append(rdata)
+                answers.append(rdata)
+        except IndexError:
+            # Handle potential index out of range errors
+            break
 
     return answers
